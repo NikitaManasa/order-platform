@@ -1,0 +1,90 @@
+# Local development stack. Credentials here are for local use only;
+# cloud deployments read them from a secrets manager (see README roadmap).
+name: order-platform
+
+x-service: &service
+  restart: unless-stopped
+  depends_on:
+    postgres:
+      condition: service_healthy
+    rabbitmq:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+    volumes:
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672" # management UI: http://localhost:15672 (guest/guest)
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  orders:
+    <<: *service
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+      args: { SERVICE: orders }
+    environment:
+      DATABASE_URL: postgresql+psycopg://app:app@postgres:5432/orders
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    ports:
+      - "8001:8000"
+
+  inventory:
+    <<: *service
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+      args: { SERVICE: inventory }
+    environment:
+      DATABASE_URL: postgresql+psycopg://app:app@postgres:5432/inventory
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    ports:
+      - "8002:8000"
+
+  payments:
+    <<: *service
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+      args: { SERVICE: payments }
+    environment:
+      DATABASE_URL: postgresql+psycopg://app:app@postgres:5432/payments
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      PAYMENT_LIMIT_CENTS: "50000"
+    ports:
+      - "8003:8000"
+
+  notifications:
+    <<: *service
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+      args: { SERVICE: notifications }
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    ports:
+      - "8004:8000"
+
+volumes:
+  pgdata:

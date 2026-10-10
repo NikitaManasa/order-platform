@@ -1,0 +1,20 @@
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+pythonpath = [
+    "shared",
+    "services/orders",
+    "services/inventory",
+    "services/payments",
+    "services/notifications",
+]
+testpaths = ["services", "tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["common", "orders_service", "inventory_service", "payments_service", "notifications_service"]
