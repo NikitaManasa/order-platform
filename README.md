@@ -97,7 +97,7 @@ infra/                database bootstrap (Terraform + Kubernetes go here next)
 ## Roadmap
 
 - [x] **Phase 1:** microservices, RabbitMQ saga, idempotency, DLQs, Docker Compose, 37 tests
-- [ ] **Phase 2:** GitHub Actions CI (lint, test, build and push images)
+- [x] **Phase 2:** GitHub Actions CI: lint → tests → full-stack integration run in Docker → images pushed to GHCR tagged by commit SHA ([ci.yml](.github/workflows/ci.yml))
 - [ ] **Phase 3:** JWT auth, role-based access, secrets from AWS Secrets Manager
 - [ ] **Phase 4:** Kubernetes manifests / Helm, deployed to `kind` locally and EKS with Terraform
 - [ ] **Phase 5:** Prometheus metrics, Grafana dashboards, OpenTelemetry tracing
