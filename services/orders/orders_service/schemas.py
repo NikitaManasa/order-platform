@@ -10,7 +10,7 @@ class OrderItemIn(BaseModel):
 
 
 class OrderCreate(BaseModel):
-    customer_id: str = Field(min_length=1, max_length=64)
+    # No customer_id here: the customer is whoever the access token says it is.
     items: list[OrderItemIn] = Field(min_length=1, max_length=50)
 
 

@@ -18,8 +18,8 @@ def session_factory():
 
 @pytest.fixture
 def order_id(session_factory):
-    data = OrderCreate(customer_id="cust-1", items=[{"sku": "SKU-MOUSE", "quantity": 1, "unit_price_cents": 2999}])
-    order, _ = service.create_order(session_factory, data)
+    data = OrderCreate(items=[{"sku": "SKU-MOUSE", "quantity": 1, "unit_price_cents": 2999}])
+    order, _ = service.create_order(session_factory, "cust-1", data)
     return order.id
 
 

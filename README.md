@@ -3,13 +3,17 @@
 [![CI](https://github.com/NikitaManasa/order-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/NikitaManasa/order-platform/actions/workflows/ci.yml)
 
 A microservices order-processing backend in Python. Four services coordinate through
-**RabbitMQ events** (the choreographed saga pattern). There are no direct service-to-service
-calls, each service owns its own **PostgreSQL** database, and every part of the flow
-is idempotent and covered by tests.
+**RabbitMQ events** (the choreographed saga pattern), and a fifth issues **JWT access tokens**.
+There are no direct service-to-service calls, each service owns its own **PostgreSQL** database,
+secrets are mounted at runtime rather than stored in code, and every part of the flow is
+idempotent and covered by tests.
 
 ```mermaid
 flowchart LR
-    client([Client]) -->|POST /orders| orders
+    client([Client]) -->|1. login| identity[identity-service]
+    identity -. public keys via JWKS .-> orders
+    client -->|2. POST /orders + Bearer token| orders
+    identity --- udb[(identity DB)]
     subgraph bus [RabbitMQ: topic exchange 'events']
     end
     orders[orders-service] -- order.created --> bus
@@ -60,6 +64,17 @@ flowchart LR
 - **Structured JSON logs.** Every log line includes `service`, `event_type` and `order_id`,
   so one order can be traced across all four services.
 
+## Security
+
+| Concern | How it's handled |
+|---|---|
+| **Authentication** | `identity-service` issues short-lived JWTs signed with **RS256**. Other services fetch only the **public** key from `/.well-known/jwks.json`, so a compromised service can check tokens but cannot create them. Keys carry a `kid`, so they can be rotated. |
+| **Token validation** | The algorithm is pinned to RS256, and `exp`, `iss` and `aud` are required. Tests in [tests/test_auth.py](tests/test_auth.py) attack this directly: expired tokens, a wrong audience, a wrong signing key, `alg: none`, and the RS256→HS256 key-confusion attack. |
+| **Authorization** | Two roles, `customer` and `admin`. Customers see only their own orders, and someone else's order returns **404, not 403**, so order ids can't be probed. The customer id always comes from the token, never the request body. Restocking, payments and notifications are admin-only. |
+| **Passwords** | Hashed with **scrypt** and a random salt. A login with an unknown email does a dummy hash, so its response time matches a wrong password and attackers can't tell which emails are registered. Both cases return the same error. Nobody can register themselves as an admin. |
+| **Secrets** | No secrets in code or images. Services read `*_FILE` env vars pointing at mounted files ([shared/common/secrets.py](shared/common/secrets.py)). Locally, `scripts/dev_secrets.py` generates random ones into a git-ignored `secrets/` folder. In the cloud, the same files come from AWS Secrets Manager through the External Secrets operator, with no code change. |
+| **Containers** | Run as a non-root user, and `secrets/` and tests are excluded from the image. |
+
 ## Run it
 
 **Tests (no Docker needed):**
@@ -72,27 +87,34 @@ python -m venv .venv
 
 **Full stack (requires Docker Desktop):**
 ```powershell
+.\.venv\Scripts\python scripts/dev_secrets.py   # once: random DB password, admin password, JWT key
 docker compose up -d --build
-python scripts/demo.py          # runs happy path, out-of-stock and declined-payment orders
+python scripts/demo.py          # saga scenarios + access-control checks against the live stack
 docker compose logs -f orders   # follow the JSON logs
 docker compose down -v
 ```
 
+To try it by hand, register at http://localhost:8005/docs and call `/auth/token`. Then click
+**Authorize** in any other service's docs and paste the `access_token`. The admin login is
+`admin@example.com`, with the password in `secrets/admin_password.txt`.
+
 | Service | URL |
 |---|---|
+| identity API docs | http://localhost:8005/docs |
 | orders API docs | http://localhost:8001/docs |
 | inventory API docs | http://localhost:8002/docs |
 | payments API docs | http://localhost:8003/docs |
-| notifications | http://localhost:8004/notifications |
-| RabbitMQ UI | http://localhost:15672 (guest / guest) |
+| notifications API docs | http://localhost:8004/docs |
+| RabbitMQ UI | http://localhost:15672 (guest / guest, local only) |
 
 ## Project layout
 
 ```
-shared/common/        event envelope, RabbitMQ publisher/consumer, logging, DB helpers
+shared/common/        event envelope, RabbitMQ publisher/consumer, JWT auth, secrets, logging, DB helpers
 services/<name>/      one FastAPI service each: models, handlers (business logic), API, tests
 services/Dockerfile   single parametrised image (--build-arg SERVICE=...), runs as non-root
-tests/test_saga.py    end-to-end saga tests across all services
+tests/                cross-service saga tests and token-security tests
+scripts/              local secret generation, end-to-end demo / integration check
 infra/                database bootstrap (Terraform + Kubernetes go here next)
 ```
 
@@ -100,7 +122,8 @@ infra/                database bootstrap (Terraform + Kubernetes go here next)
 
 - [x] **Phase 1:** microservices, RabbitMQ saga, idempotency, DLQs, Docker Compose, 37 tests
 - [x] **Phase 2:** GitHub Actions CI: lint → tests → full-stack integration run in Docker → images pushed to GHCR tagged by commit SHA ([ci.yml](.github/workflows/ci.yml))
-- [ ] **Phase 3:** JWT auth, role-based access, secrets from AWS Secrets Manager
+- [x] **Phase 3:** identity service, RS256 JWT + JWKS, role-based access, file-mounted secrets, 68 tests
+- [ ] Login rate limiting and refresh tokens
 - [ ] **Phase 4:** Kubernetes manifests / Helm, deployed to `kind` locally and EKS with Terraform
 - [ ] **Phase 5:** Prometheus metrics, Grafana dashboards, OpenTelemetry tracing
 - [ ] **Known limitation → transactional outbox:** events are published *after* the DB commit, so a

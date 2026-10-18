@@ -63,7 +63,7 @@ class Platform:
         self.bus.subscribe(notifications.SUBSCRIBES_TO, lambda e: notifications.handle_event(e, self.outbox))
 
     def place_order(self, items):
-        order, event = order_service.create_order(self.orders_db, OrderCreate(customer_id="cust-1", items=items))
+        order, event = order_service.create_order(self.orders_db, "cust-1", OrderCreate(items=items))
         self.bus.publish(event)
         return order_service.get_order(self.orders_db, order.id)
 
@@ -121,7 +121,8 @@ def test_declined_payment_cancels_order_and_releases_stock(platform):
 def test_redelivered_order_created_does_not_double_reserve(platform):
     order, event = order_service.create_order(
         platform.orders_db,
-        OrderCreate(customer_id="cust-1", items=[{"sku": "SKU-KEYBOARD", "quantity": 5, "unit_price_cents": 8999}]),
+        "cust-1",
+        OrderCreate(items=[{"sku": "SKU-KEYBOARD", "quantity": 5, "unit_price_cents": 8999}]),
     )
 
     platform.bus.publish(event)

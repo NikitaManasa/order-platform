@@ -1,11 +1,13 @@
 import asyncio
 from contextlib import asynccontextmanager
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, ConfigDict
+from fastapi import Depends, FastAPI, HTTPException
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
+from common.auth import Principal, TokenVerifier, auth_dependencies
 from common.db import make_engine
 from common.events import Event
 from common.logging_config import setup_logging
@@ -24,7 +26,15 @@ class ProductOut(BaseModel):
     stock: int
 
 
-def create_app(settings: Settings | None = None, publisher: Publisher | None = None) -> FastAPI:
+class RestockIn(BaseModel):
+    quantity: int = Field(gt=0, le=10_000)
+
+
+def create_app(
+    settings: Settings | None = None,
+    publisher: Publisher | None = None,
+    verifier: TokenVerifier | None = None,
+) -> FastAPI:
     """App factory. Pass a `publisher` (tests) to run without RabbitMQ."""
     settings = settings or Settings.from_env()
     setup_logging("inventory")
@@ -33,6 +43,7 @@ def create_app(settings: Settings | None = None, publisher: Publisher | None = N
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(engine, expire_on_commit=False)
     seed_products(session_factory)
+    _, admin_user = auth_dependencies(verifier or TokenVerifier(jwks_url=settings.jwks_url))
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -65,6 +76,14 @@ def create_app(settings: Settings | None = None, publisher: Publisher | None = N
             product = session.get(Product, sku)
             return ProductOut.model_validate(product) if product else None
 
+    def _restock(sku: str, quantity: int) -> ProductOut | None:
+        with session_factory.begin() as session:
+            product = session.get(Product, sku, with_for_update=True)
+            if product is None:
+                return None
+            product.stock += quantity
+            return ProductOut.model_validate(product)
+
     @app.get("/health")
     async def health() -> dict:
         return {"status": "ok"}
@@ -76,6 +95,13 @@ def create_app(settings: Settings | None = None, publisher: Publisher | None = N
     @app.get("/products/{sku}", response_model=ProductOut)
     async def get_product(sku: str) -> ProductOut:
         product = await asyncio.to_thread(_get_product, sku)
+        if product is None:
+            raise HTTPException(status_code=404, detail="product not found")
+        return product
+
+    @app.post("/products/{sku}/restock", response_model=ProductOut)
+    async def restock(sku: str, body: RestockIn, _: Annotated[Principal, Depends(admin_user)]) -> ProductOut:
+        product = await asyncio.to_thread(_restock, sku, body.quantity)
         if product is None:
             raise HTTPException(status_code=404, detail="product not found")
         return product

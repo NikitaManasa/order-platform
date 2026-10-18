@@ -2,9 +2,10 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 
+from common.auth import Role
 from common.db import make_engine
 from common.events import Event, EventType
-from common.testing import InMemoryPublisher
+from common.testing import InMemoryPublisher, auth_header, fake_verifier
 from payments_service.config import Settings
 from payments_service.handlers import handle_event
 from payments_service.main import create_app
@@ -52,8 +53,10 @@ def test_ignores_other_events(session_factory):
     assert handle_event(session_factory, Event(type=EventType.ORDER_CREATED, order_id="x"), LIMIT) == []
 
 
-def test_payments_api():
-    app = create_app(Settings(database_url="sqlite://"), publisher=InMemoryPublisher())
+def test_payments_api_is_admin_only():
+    app = create_app(Settings(database_url="sqlite://"), publisher=InMemoryPublisher(), verifier=fake_verifier())
     with TestClient(app) as client:
-        assert client.get("/payments/order-1").status_code == 404
+        assert client.get("/payments/order-1").status_code == 401
+        assert client.get("/payments/order-1", headers=auth_header("alice")).status_code == 403
+        assert client.get("/payments/order-1", headers=auth_header("a", Role.ADMIN)).status_code == 404
         assert client.get("/health").json() == {"status": "ok"}

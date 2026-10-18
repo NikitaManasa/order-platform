@@ -3,3 +3,4 @@ uvicorn==0.34.0
 sqlalchemy==2.0.36
 psycopg[binary]==3.2.3
 aio-pika==9.5.4
+pyjwt[crypto]==2.10.1

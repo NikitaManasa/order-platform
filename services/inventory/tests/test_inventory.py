@@ -3,9 +3,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
+from common.auth import Role
 from common.db import make_engine
 from common.events import Event, EventType
-from common.testing import InMemoryPublisher
+from common.testing import InMemoryPublisher, auth_header, fake_verifier
 from inventory_service.config import Settings
 from inventory_service.handlers import handle_event
 from inventory_service.main import create_app
@@ -102,10 +103,30 @@ def test_duplicate_order_created_reserves_once(session_factory):
     assert stock(session_factory, "SKU-KEYBOARD") == 47
 
 
-def test_products_api():
-    app = create_app(Settings(database_url="sqlite://"), publisher=InMemoryPublisher())
-    with TestClient(app) as client:
-        products = client.get("/products").json()
-        assert {p["sku"] for p in products} == {"SKU-KEYBOARD", "SKU-MOUSE", "SKU-MONITOR", "SKU-LAPTOP"}
-        assert client.get("/products/SKU-MOUSE").json()["stock"] == 100
-        assert client.get("/products/SKU-NOPE").status_code == 404
+@pytest.fixture
+def client():
+    app = create_app(Settings(database_url="sqlite://"), publisher=InMemoryPublisher(), verifier=fake_verifier())
+    with TestClient(app) as c:
+        yield c
+
+
+def test_catalog_is_public(client):
+    products = client.get("/products").json()
+    assert {p["sku"] for p in products} == {"SKU-KEYBOARD", "SKU-MOUSE", "SKU-MONITOR", "SKU-LAPTOP"}
+    assert client.get("/products/SKU-MOUSE").json()["stock"] == 100
+    assert client.get("/products/SKU-NOPE").status_code == 404
+
+
+def test_admin_can_restock(client):
+    resp = client.post("/products/SKU-MONITOR/restock", json={"quantity": 5}, headers=auth_header("a", Role.ADMIN))
+
+    assert resp.status_code == 200
+    assert resp.json()["stock"] == 15
+
+
+@pytest.mark.parametrize(("headers", "expected"), [({}, 401), (auth_header("alice"), 403)])
+def test_restock_requires_admin(client, headers, expected):
+    resp = client.post("/products/SKU-MONITOR/restock", json={"quantity": 5}, headers=headers)
+
+    assert resp.status_code == expected
+    assert client.get("/products/SKU-MONITOR").json()["stock"] == 10

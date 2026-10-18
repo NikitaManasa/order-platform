@@ -6,6 +6,7 @@ pythonpath = [
     "services/inventory",
     "services/payments",
     "services/notifications",
+    "services/identity",
 ]
 testpaths = ["services", "tests"]
 
@@ -17,4 +18,4 @@ target-version = "py312"
 select = ["E", "F", "I", "B", "UP"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["common", "orders_service", "inventory_service", "payments_service", "notifications_service"]
+known-first-party = ["common", "orders_service", "inventory_service", "payments_service", "notifications_service", "identity_service"]

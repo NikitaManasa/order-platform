@@ -1,12 +1,14 @@
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
+from common.auth import Principal, TokenVerifier, auth_dependencies
 from common.db import make_engine
 from common.events import Event
 from common.logging_config import setup_logging
@@ -28,7 +30,11 @@ class PaymentOut(BaseModel):
     created_at: datetime
 
 
-def create_app(settings: Settings | None = None, publisher: Publisher | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    publisher: Publisher | None = None,
+    verifier: TokenVerifier | None = None,
+) -> FastAPI:
     """App factory. Pass a `publisher` (tests) to run without RabbitMQ."""
     settings = settings or Settings.from_env()
     setup_logging("payments")
@@ -36,6 +42,7 @@ def create_app(settings: Settings | None = None, publisher: Publisher | None = N
     engine = make_engine(settings.database_url)
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(engine, expire_on_commit=False)
+    _, admin_user = auth_dependencies(verifier or TokenVerifier(jwks_url=settings.jwks_url))
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -70,7 +77,7 @@ def create_app(settings: Settings | None = None, publisher: Publisher | None = N
         return {"status": "ok"}
 
     @app.get("/payments/{order_id}", response_model=PaymentOut)
-    async def get_payment(order_id: str) -> PaymentOut:
+    async def get_payment(order_id: str, _: Annotated[Principal, Depends(admin_user)]) -> PaymentOut:
         payment = await asyncio.to_thread(_get_payment, order_id)
         if payment is None:
             raise HTTPException(status_code=404, detail="payment not found")

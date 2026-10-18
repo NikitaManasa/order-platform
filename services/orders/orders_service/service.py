@@ -6,11 +6,11 @@ from orders_service.models import Order, OrderItem
 from orders_service.schemas import OrderCreate, OrderOut
 
 
-def create_order(session_factory: sessionmaker, data: OrderCreate) -> tuple[OrderOut, Event]:
+def create_order(session_factory: sessionmaker, customer_id: str, data: OrderCreate) -> tuple[OrderOut, Event]:
     """Persist a PENDING order and build the `order.created` event that kicks off the saga."""
     with session_factory.begin() as session:
         order = Order(
-            customer_id=data.customer_id,
+            customer_id=customer_id,
             total_cents=sum(i.quantity * i.unit_price_cents for i in data.items),
             items=[OrderItem(**i.model_dump()) for i in data.items],
         )

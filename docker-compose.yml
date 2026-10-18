@@ -1,5 +1,7 @@
-# Local development stack. Credentials here are for local use only;
-# cloud deployments read them from a secrets manager (see README roadmap).
+# Local development stack.
+# Secrets live in ./secrets (git-ignored), created by `python scripts/dev_secrets.py`, and are
+# mounted at /run/secrets/<name>. Services read them via *_FILE env vars, the same mechanism
+# Kubernetes uses, so the cloud deployment only swaps where the files come from.
 name: order-platform
 
 x-service: &service
@@ -10,12 +12,18 @@ x-service: &service
     rabbitmq:
       condition: service_healthy
 
+x-db-env: &db-env
+  DB_PASSWORD_FILE: /run/secrets/db_password
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+  JWKS_URL: http://identity:8000/.well-known/jwks.json
+
 services:
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: app
-      POSTGRES_PASSWORD: app
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
     volumes:
       - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
       - pgdata:/var/lib/postgresql/data
@@ -31,12 +39,31 @@ services:
     image: rabbitmq:3.13-management-alpine
     ports:
       - "5672:5672"
-      - "15672:15672" # management UI: http://localhost:15672 (guest/guest)
+      - "15672:15672" # management UI: http://localhost:15672 (guest/guest, local only)
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
       timeout: 5s
       retries: 10
+
+  identity:
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+      args: { SERVICE: identity }
+    environment:
+      DATABASE_URL: postgresql+psycopg://app@postgres:5432/identity
+      DB_PASSWORD_FILE: /run/secrets/db_password
+      JWT_PRIVATE_KEY_FILE: /run/secrets/jwt_private_key
+      ADMIN_EMAIL: admin@example.com
+      ADMIN_PASSWORD_FILE: /run/secrets/admin_password
+    secrets: [db_password, jwt_private_key, admin_password]
+    ports:
+      - "8005:8000"
 
   orders:
     <<: *service
@@ -45,8 +72,9 @@ services:
       dockerfile: services/Dockerfile
       args: { SERVICE: orders }
     environment:
-      DATABASE_URL: postgresql+psycopg://app:app@postgres:5432/orders
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      <<: *db-env
+      DATABASE_URL: postgresql+psycopg://app@postgres:5432/orders
+    secrets: [db_password]
     ports:
       - "8001:8000"
 
@@ -57,8 +85,9 @@ services:
       dockerfile: services/Dockerfile
       args: { SERVICE: inventory }
     environment:
-      DATABASE_URL: postgresql+psycopg://app:app@postgres:5432/inventory
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      <<: *db-env
+      DATABASE_URL: postgresql+psycopg://app@postgres:5432/inventory
+    secrets: [db_password]
     ports:
       - "8002:8000"
 
@@ -69,9 +98,10 @@ services:
       dockerfile: services/Dockerfile
       args: { SERVICE: payments }
     environment:
-      DATABASE_URL: postgresql+psycopg://app:app@postgres:5432/payments
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      <<: *db-env
+      DATABASE_URL: postgresql+psycopg://app@postgres:5432/payments
       PAYMENT_LIMIT_CENTS: "50000"
+    secrets: [db_password]
     ports:
       - "8003:8000"
 
@@ -83,8 +113,17 @@ services:
       args: { SERVICE: notifications }
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      JWKS_URL: http://identity:8000/.well-known/jwks.json
     ports:
       - "8004:8000"
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+  admin_password:
+    file: ./secrets/admin_password.txt
+  jwt_private_key:
+    file: ./secrets/jwt_private_key.pem
 
 volumes:
   pgdata:

@@ -25,15 +25,20 @@ jobs:
         run: pytest -q
 
   integration:
-    # Brings up the real stack (Postgres + RabbitMQ + 4 services) and runs the demo scenarios.
+    # Brings up the real stack (Postgres + RabbitMQ + 5 services) and runs the end-to-end checks.
     needs: lint-and-test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Generate throwaway secrets for this run
+        run: pip install cryptography && python scripts/dev_secrets.py
       - name: Start stack
         run: docker compose up -d --build --wait --wait-timeout 180
       - name: Run end-to-end scenarios
-        run: python3 scripts/demo.py
+        run: python scripts/demo.py
       - name: Dump logs on failure
         if: failure()
         run: docker compose logs --no-color
@@ -51,7 +56,7 @@ jobs:
       packages: write
     strategy:
       matrix:
-        service: [orders, inventory, payments, notifications]
+        service: [identity, orders, inventory, payments, notifications]
     steps:
       - uses: actions/checkout@v5
       - name: Lowercase owner (registry image names must be lowercase)
