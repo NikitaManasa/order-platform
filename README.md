@@ -1,5 +1,7 @@
 # Event-Driven Order Platform
 
+[![CI](https://github.com/NikitaManasa/order-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/NikitaManasa/order-platform/actions/workflows/ci.yml)
+
 A microservices order-processing backend in Python. Four services coordinate through
 **RabbitMQ events** (the choreographed saga pattern). There are no direct service-to-service
 calls, each service owns its own **PostgreSQL** database, and every part of the flow
